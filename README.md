@@ -1,7 +1,6 @@
 # AWS Serverless File Processor
 
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.5-623CE4?logo=terraform&logoColor=white)](https://www.terraform.io)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Upload a CSV, get back a queryable table — automatically, no manual step
 anywhere between upload and query.
@@ -236,7 +235,3 @@ The gaps, stated here rather than left to be discovered.
 - **No CI.** Nothing runs `fmt`, `validate`, or a security scan on push.
 - **Tested manually.** No automated test proves the end-to-end path after
   `apply`.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
