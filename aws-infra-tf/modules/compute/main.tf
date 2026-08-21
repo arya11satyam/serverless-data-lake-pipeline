@@ -40,6 +40,13 @@ resource "aws_iam_policy_attachment" "ec2_policy_attachment" {
   roles      = [aws_iam_role.ec2_role.name]
 }
 
+# Enables SSM Session Manager access for debugging, without a SSH key pair.
+resource "aws_iam_policy_attachment" "ec2_ssm_access" {
+  name       = "${var.project_name}-ec2-ssm-access"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  roles      = [aws_iam_role.ec2_role.name]
+}
+
 resource "aws_iam_instance_profile" "ec2_profile" {
   name = "${var.project_name}-ec2-profile"
   role = aws_iam_role.ec2_role.name
@@ -54,11 +61,14 @@ resource "aws_instance" "processor" {
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
   vpc_security_group_ids      = [var.security_group_id]
 
+  # cloud-init only runs user_data on first boot, so force replacement on change
+  user_data_replace_on_change = true
+
   user_data = templatefile("${path.module}/user_data.sh", {
-    sqs_queue_url        = var.sqs_queue_url
-    source_bucket_name   = var.source_bucket_name
-    target_bucket_name   = var.target_bucket_name
-    aws_region          = var.aws_region
+    sqs_queue_url      = var.sqs_queue_url
+    source_bucket_name = var.source_bucket_name
+    target_bucket_name = var.target_bucket_name
+    aws_region         = var.aws_region
   })
 
   tags = {

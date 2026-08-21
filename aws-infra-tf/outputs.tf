@@ -27,3 +27,18 @@ output "glue_database_name" {
   description = "Name of the Glue database"
   value       = aws_glue_catalog_database.data_catalog.name
 }
+
+output "athena_workgroup_name" {
+  description = "Name of the Athena workgroup to run queries in"
+  value       = aws_athena_workgroup.data_pipeline_wg.name
+}
+
+output "athena_results_bucket" {
+  description = "S3 bucket holding Athena query results"
+  value       = aws_s3_bucket.athena_results.bucket
+}
+
+output "athena_sample_query" {
+  description = "Run this in the Athena console (select the workgroup above first) once the Glue crawler has run at least once"
+  value       = "SELECT * FROM \"${aws_glue_catalog_database.data_catalog.name}\".\"<table_name_from_crawler>\" LIMIT 10;"
+}

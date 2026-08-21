@@ -1,3 +1,5 @@
+data "aws_caller_identity" "current" {}
+
 # SQS Queue
 resource "aws_sqs_queue" "processing_queue" {
   name = var.sqs_queue_name
@@ -14,7 +16,7 @@ resource "aws_sqs_queue" "processing_queue" {
         "kms:Encrypt",
         "kms:Decrypt"
       ]
-      Resource = "arn:aws:sqs:${var.aws_region}:${var.aws_account_id}:${var.sqs_queue_name}"
+      Resource = "arn:aws:sqs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${var.sqs_queue_name}"
       Condition = {
         ArnEquals = {
           "aws:SourceArn" = aws_sns_topic.processing_topic.arn
@@ -38,13 +40,13 @@ resource "aws_sns_topic" "processing_topic" {
         Service = "s3.amazonaws.com"
       }
       Action   = "SNS:Publish"
-      Resource = "arn:aws:sns:${var.aws_region}:${var.aws_account_id}:${var.sns_topic_name}"
+      Resource = "arn:aws:sns:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${var.sns_topic_name}"
       Condition = {
         ArnLike = {
           "aws:SourceArn" = "arn:aws:s3:::${var.source_bucket_name}"
         }
         StringEquals = {
-          "aws:SourceAccount" = var.aws_account_id
+          "aws:SourceAccount" = data.aws_caller_identity.current.account_id
         }
       }
     }]

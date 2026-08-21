@@ -1,5 +1,5 @@
 output "api_gateway_url" {
-  value = "${aws_api_gateway_rest_api.upload_api.execution_arn}/v1/upload"
+  value = "${aws_api_gateway_stage.api_stage.invoke_url}/upload"
 }
 
 output "lambda_function_name" {

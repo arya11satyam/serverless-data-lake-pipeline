@@ -4,11 +4,6 @@ variable "aws_region" {
   default     = "us-east-1"
 }
 
-variable "aws_account_id" {
-  description = "AWS Account ID"
-  type        = string
-}
-
 variable "environment" {
   description = "Environment name (dev, staging, prod)"
   type        = string
@@ -54,5 +49,5 @@ variable "ami_id" {
 variable "instance_type" {
   description = "EC2 instance type"
   type        = string
-  default     = "t2.micro"
+  default     = "t3.micro"
 }
