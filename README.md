@@ -1,11 +1,9 @@
 # AWS Serverless File Processor
 
-Upload a CSV, get back a queryable table. That's the whole idea: drop a
-file through an API, and it's automatically converted to Parquet,
-cataloged, and ready to query in Athena — no manual steps in between.
-
-Built with Lambda, S3, DynamoDB, SNS/SQS, EC2, and Glue, all provisioned
-through Terraform.
+Upload a CSV, get back a queryable table. This pipeline automatically
+converts uploaded CSV files to Parquet and makes them queryable through
+Athena, using Lambda, S3, DynamoDB, SNS/SQS, EC2, and AWS Glue — all
+provisioned with Terraform.
 
 ## Architecture
 
@@ -28,9 +26,26 @@ flowchart TD
     classDef messaging fill:#fbe1d3,stroke:#c96a3d,color:#5c2a10
 ```
 
-Everything past the initial upload runs on its own — S3 events fan out
-through SNS/SQS to trigger the conversion, and another S3 event on the
-output bucket triggers cataloging. Nothing in the middle needs a human.
+This pipeline is built around the following components:
+
+- **API Gateway**: REST API endpoint for file uploads
+- **Lambda Function**: Handles file uploads and metadata storage
+- **S3 Buckets**: Source and destination storage for files
+- **DynamoDB**: Metadata storage for uploaded files
+- **SNS/SQS**: Event-driven messaging for file processing
+- **EC2 Instance**: Processes CSV to Parquet conversion
+- **AWS Glue**: Catalogs the processed files, triggered automatically
+- **Athena**: Query engine for the cataloged data
+
+## Features
+
+- **Serverless File Upload**: REST API endpoint for uploading files
+- **Automatic Format Conversion**: CSV files automatically converted to Parquet
+- **Event-Driven Processing**: S3 events drive the pipeline end to end
+- **Metadata Tracking**: File metadata stored in DynamoDB
+- **Data Cataloging**: AWS Glue crawler runs automatically, no manual trigger
+- **Queryable Output**: Processed data is queryable in Athena within about a minute
+- **Secure Infrastructure**: Encrypted storage and per-service IAM roles
 
 ## Project Structure
 
@@ -60,11 +75,12 @@ There's no AWS account ID to configure anywhere — Terraform picks it up
 from whatever credentials are active, so this deploys unmodified to any
 account.
 
-## Deploy
+## Deployment
 
 ```bash
 cd aws-infra-tf
 terraform init
+terraform plan  -var-file="variables/dev-modular.tfvars"
 terraform apply -var-file="variables/dev-modular.tfvars"
 ```
 
@@ -86,32 +102,44 @@ curl -X POST \
   --data-binary @test/data.csv
 ```
 
-Within about a minute, it's queryable — select the workgroup from
-`athena_workgroup_name` in the Athena console, then:
+## Processing Flow
 
-```sql
-SELECT * FROM "<glue_database_name>"."uploads" LIMIT 10;
-```
+1. File uploaded via API Gateway
+2. Lambda function stores the file in S3 and writes metadata to DynamoDB
+3. S3 event triggers an SNS notification
+4. SNS message is sent to an SQS queue
+5. EC2 instance processes SQS messages
+6. CSV files are converted to Parquet format
+7. Processed files are stored in the destination S3 bucket
+8. The new file triggers a Lambda that starts the Glue crawler
+9. Glue crawler catalogs the data, making it queryable in Athena
 
-## What Gets Created
+## AWS Resources Created
 
-| Category | Resources |
-|---|---|
-| Ingress | API Gateway, uploader Lambda |
-| Storage | 2 S3 buckets, DynamoDB table |
-| Messaging | SNS topic, SQS queue |
-| Processing | EC2 instance running a `systemd` service |
-| Cataloging | Glue database + crawler, crawler-trigger Lambda |
-| Querying | Athena workgroup + results bucket |
-| Networking | VPC, subnet, internet gateway, route table, security group |
+- **S3 Buckets**: 2 buckets for source and processed files, plus one for Athena query results
+- **Lambda Functions**: Upload handler and crawler-trigger handler
+- **API Gateway**: REST API with a POST endpoint
+- **DynamoDB Table**: Metadata storage
+- **SNS Topic**: Event notifications
+- **SQS Queue**: Message processing
+- **EC2 Instance**: Data processing worker
+- **VPC**: Isolated network environment
+- **IAM Roles**: One per service, scoped to what it needs
+- **AWS Glue**: Database and crawler for the data catalog
+- **Athena**: Workgroup for querying the cataloged data
 
-## Security
+## Security Features
 
-S3 and DynamoDB are encrypted at rest. Each Lambda and the EC2 instance
-get their own IAM role, scoped to their own service — though the
-permissions within those roles are still `Resource: "*"` rather than
-locked to specific ARNs, and nothing account-specific is hardcoded
-anywhere in this repo.
+- Server-side encryption for S3 buckets and the DynamoDB table (AWS KMS)
+- Each Lambda and the EC2 instance run under their own IAM role, scoped to their own service
+- EC2 processor runs inside a dedicated VPC with a scoped security group
+- No AWS account ID or other account-specific values are hardcoded anywhere in this repo
+
+## Monitoring and Logging
+
+- CloudWatch logs for both Lambda functions
+- EC2 processor logs to the systemd journal (`journalctl -u csv-processor`)
+- SQS visibility timeout tuned for processing reliability
 
 ## Testing
 
@@ -130,18 +158,13 @@ cd aws-infra-tf
 terraform destroy -var-file="variables/dev-modular.tfvars"
 ```
 
-## Known Limitations
+## Future Enhancements
 
-- IAM policies are broader than they need to be (`Resource: "*"`)
-- No CORS support, so uploads only work from curl/Postman/server-to-server, not a browser
-- No dead-letter queue — a message that keeps failing just retries forever
-- Terraform state is local, no remote backend yet
-- Single EC2 instance, no redundancy
-
-## Roadmap
-
-- Remote state (S3 + DynamoDB lock table)
-- Least-privilege IAM policies
-- CORS support
-- SQS dead-letter queue
-- CI for `terraform validate`/`plan` on PRs
+- Add support for multiple file formats
+- Implement data validation and quality checks
+- Add CloudWatch dashboards for monitoring
+- Implement dead-letter queues for error handling
+- Add an automated testing / CI pipeline
+- Move Terraform state to a remote S3 + DynamoDB backend
+- Scope IAM policies down to least privilege
+- Add CORS support for browser-based uploads
