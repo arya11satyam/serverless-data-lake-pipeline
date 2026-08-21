@@ -2,18 +2,18 @@
 
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.5-623CE4?logo=terraform&logoColor=white)](https://www.terraform.io)
 
-Upload a CSV, get back a queryable table — automatically, no manual step
-anywhere between upload and query.
+Upload a CSV, get back a queryable table. No manual step anywhere between
+upload and query.
 
 ## Why
 
-Raw CSV sitting in S3 is slow and expensive to query — Athena scans every
-byte of every row, and bills per TB scanned. Converting to Parquet gives
-columnar reads and compression, so a query touching two columns stops
-paying for forty.
+Athena bills per byte scanned. CSV can't be read partially — querying two
+columns still means scanning the whole row. Parquet splits data by column
+and compresses it, so you only pay for the columns you actually query.
 
-This pipeline automates the raw-to-curated transition: convert on arrival,
-catalog automatically, queryable in Athena within about a minute of upload.
+This pipeline just automates the conversion so you don't have to remember
+to do it: upload a CSV, and it's sitting in Athena as Parquet, cataloged
+and ready to query, within about a minute.
 
 ## Architecture
 
