@@ -1,6 +1,3 @@
-# Resolves the caller's AWS account ID dynamically instead of requiring it
-# as a variable, so nothing account-specific needs to be hardcoded or
-# committed to version control.
 data "aws_caller_identity" "current" {}
 
 # SQS Queue

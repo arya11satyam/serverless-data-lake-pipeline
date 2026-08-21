@@ -12,10 +12,6 @@ glue = boto3.client('glue')
 
 
 def lambda_handler(event, context):
-    """Triggered by S3 ObjectCreated on the target (processed) bucket.
-    Starts the Glue crawler so newly written Parquet files become queryable
-    in Athena without any manual step.
-    """
     LOGGER.info("New object event: %s", event)
 
     try:
@@ -24,8 +20,6 @@ def lambda_handler(event, context):
     except ClientError as e:
         error_code = e.response.get('Error', {}).get('Code')
         if error_code == 'CrawlerRunningException':
-            # A crawl is already in progress. It's already picking up
-            # everything currently in the bucket, so there's nothing to do.
             LOGGER.info("Crawler %s is already running; skipping", CRAWLER_NAME)
         else:
             LOGGER.error("Failed to start crawler %s: %s", CRAWLER_NAME, e)

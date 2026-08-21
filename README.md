@@ -1,91 +1,83 @@
 # AWS Serverless File Processor
 
-A serverless pipeline that converts uploaded CSV files to Parquet and makes
-them queryable via Athena, with no manual steps between upload and query.
-Built on Lambda, S3, DynamoDB, SNS/SQS, EC2, and AWS Glue, all provisioned
-with Terraform.
+Upload a CSV, get back a queryable table. That's the whole idea: drop a
+file through an API, and it's automatically converted to Parquet,
+cataloged, and ready to query in Athena — no manual steps in between.
+
+Built with Lambda, S3, DynamoDB, SNS/SQS, EC2, and Glue, all provisioned
+through Terraform.
 
 ## Architecture
 
-```
-Client  --POST /upload?filename=data.csv-->  API Gateway
-API Gateway  --AWS_PROXY-->  Lambda (uploader)
-Lambda  -->  S3 (source bucket)
-Lambda  -->  DynamoDB (upload metadata)
-S3 source bucket  --ObjectCreated-->  SNS  -->  SQS
-EC2 (systemd service, long-polling)  --consumes-->  SQS
-EC2  --CSV to Parquet-->  S3 (target bucket)
-S3 target bucket  --ObjectCreated-->  Lambda (crawler-trigger)
-Lambda (crawler-trigger)  -->  Glue Crawler  -->  Glue Data Catalog
-Athena  --queries-->  Glue Data Catalog table
+```mermaid
+flowchart TD
+    Client(["Client<br/>POST /upload"]):::client --> APIGW["API Gateway<br/>REST endpoint"]:::compute
+    APIGW --> Lambda["Lambda<br/>file + metadata"]:::compute
+    Lambda --> Dynamo[("DynamoDB<br/>file metadata")]:::storage
+    Lambda --> S3Src[("S3 source<br/>raw CSV")]:::storage
+    S3Src --> SNS{{"SNS<br/>fan-out on upload"}}:::messaging
+    SNS --> SQS{{"SQS<br/>buffers, retries"}}:::messaging
+    SQS --> EC2["EC2 worker<br/>CSV to Parquet"]:::compute
+    EC2 --> S3Dst[("S3 processed<br/>Parquet output")]:::storage
+    S3Dst --> Glue["Glue crawler<br/>catalogs output"]:::compute
+    Glue --> Athena["Athena<br/>SQL queries"]:::compute
+
+    classDef client fill:#ece7da,stroke:#8a8371,color:#2b2718
+    classDef compute fill:#e2ddfb,stroke:#7266d6,color:#2f2a5c
+    classDef storage fill:#d7f0e2,stroke:#3f9967,color:#153826
+    classDef messaging fill:#fbe1d3,stroke:#c96a3d,color:#5c2a10
 ```
 
-Every arrow above fires automatically. Uploading a file is the only manual
-action; everything from S3 storage through to a queryable Athena table
-happens on its own.
+Everything past the initial upload runs on its own — S3 events fan out
+through SNS/SQS to trigger the conversion, and another S3 event on the
+output bucket triggers cataloging. Nothing in the middle needs a human.
 
 ## Project Structure
 
 ```
 .
-├── aws-infra-tf/                  # Terraform infrastructure
-│   ├── main.tf                    # Root module: Glue, Athena, crawler-trigger Lambda
-│   ├── outputs.tf
-│   ├── provider.tf
-│   ├── variables.tf
-│   ├── variables/dev-modular.tfvars
+├── aws-infra-tf/               Terraform infrastructure
+│   ├── main.tf                 Root module: Glue, Athena, crawler-trigger Lambda
 │   └── modules/
-│       ├── networking/            # VPC, subnet, security group
-│       ├── messaging/             # SNS topic, SQS queue
-│       ├── data/                  # S3 buckets, DynamoDB table
-│       ├── api-gateway/           # API Gateway + uploader Lambda
-│       └── compute/               # EC2 processor + its boot script
+│       ├── networking/         VPC, subnet, security group
+│       ├── messaging/          SNS topic, SQS queue
+│       ├── data/                S3 buckets, DynamoDB table
+│       ├── api-gateway/        API Gateway + uploader Lambda
+│       └── compute/            EC2 processor + boot script
 ├── back-end/
-│   ├── lambda_function.py         # Upload handler (S3 + DynamoDB write)
-│   └── crawler-trigger/
-│       └── lambda_function.py     # Starts the Glue crawler on new Parquet files
-└── test/
-    ├── data.csv                   # Sample input
-    ├── data.parquet               # Sample output
-    └── test.py                    # Local Parquet read check
+│   ├── lambda_function.py             Upload handler
+│   └── crawler-trigger/lambda_function.py   Starts the Glue crawler
+└── test/                       Sample CSV/Parquet + a quick read check
 ```
 
 ## Prerequisites
 
 - AWS CLI configured with credentials for the target account
 - Terraform >= 1.5
-- (Optional, for `test/test.py`) Python 3.8+ with `pandas` and `pyarrow`
+- Python 3.8+ with `pandas`/`pyarrow`, only if you want to run `test/test.py`
 
-No AWS account ID needs to be configured anywhere — Terraform resolves it
-at apply time from whichever credentials are active
-(`data.aws_caller_identity`), so the same config works unmodified against
-any account.
+There's no AWS account ID to configure anywhere — Terraform picks it up
+from whatever credentials are active, so this deploys unmodified to any
+account.
 
-## Deployment
+## Deploy
 
 ```bash
 cd aws-infra-tf
 terraform init
-terraform plan  -var-file="variables/dev-modular.tfvars"
 terraform apply -var-file="variables/dev-modular.tfvars"
 ```
 
-Resource names follow the pattern `{environment}-{region}-{project_suffix}-{resource_type}`,
-configurable in `variables/dev-modular.tfvars`. The EC2 processor takes a
-few minutes after `apply` to finish its boot-time setup before it starts
-consuming from SQS.
-
-Useful outputs after apply:
+Give the EC2 processor a few minutes after `apply` finishes — it's still
+installing packages before it starts consuming from SQS.
 
 ```bash
-terraform output api_gateway_url        # POST endpoint
+terraform output api_gateway_url        # your POST endpoint
 terraform output athena_workgroup_name  # select this in the Athena console
 terraform output glue_database_name
 ```
 
 ## Usage
-
-Upload a file:
 
 ```bash
 curl -X POST \
@@ -94,36 +86,32 @@ curl -X POST \
   --data-binary @test/data.csv
 ```
 
-Once converted and cataloged (usually well under a minute after upload),
-query it in Athena — select the workgroup from `athena_workgroup_name`
-first, then:
+Within about a minute, it's queryable — select the workgroup from
+`athena_workgroup_name` in the Athena console, then:
 
 ```sql
 SELECT * FROM "<glue_database_name>"."uploads" LIMIT 10;
 ```
 
-## AWS Resources Created
+## What Gets Created
 
 | Category | Resources |
 |---|---|
-| Ingress | API Gateway REST API, uploader Lambda |
-| Storage | 2 S3 buckets (source, target), DynamoDB table |
+| Ingress | API Gateway, uploader Lambda |
+| Storage | 2 S3 buckets, DynamoDB table |
 | Messaging | SNS topic, SQS queue |
-| Processing | EC2 instance running a supervised `systemd` service |
-| Cataloging | Glue database, Glue crawler, crawler-trigger Lambda |
-| Querying | Athena workgroup, Athena results bucket |
+| Processing | EC2 instance running a `systemd` service |
+| Cataloging | Glue database + crawler, crawler-trigger Lambda |
+| Querying | Athena workgroup + results bucket |
 | Networking | VPC, subnet, internet gateway, route table, security group |
-| IAM | One role per service (Lambda x2, EC2, Glue) |
 
 ## Security
 
-- S3 buckets and the DynamoDB table use server-side encryption (KMS)
-- Each compute component (uploader Lambda, crawler-trigger Lambda, EC2
-  processor) has its own IAM role, scoped to its own service — but action
-  permissions within those roles are currently `Resource: "*"` rather than
-  scoped to specific ARNs (see Known Limitations)
-- No AWS account ID or other account-specific values are hardcoded or
-  committed to this repo
+S3 and DynamoDB are encrypted at rest. Each Lambda and the EC2 instance
+get their own IAM role, scoped to their own service — though the
+permissions within those roles are still `Resource: "*"` rather than
+locked to specific ARNs, and nothing account-specific is hardcoded
+anywhere in this repo.
 
 ## Testing
 
@@ -132,8 +120,8 @@ cd test
 python test.py
 ```
 
-Reads `data.parquet` and prints it as a DataFrame — a quick sanity check
-that a Parquet file produced by the pipeline is well-formed.
+Reads `data.parquet` back into a DataFrame — a quick check that the
+pipeline's output is a well-formed Parquet file.
 
 ## Cleanup
 
@@ -144,19 +132,16 @@ terraform destroy -var-file="variables/dev-modular.tfvars"
 
 ## Known Limitations
 
-- IAM policies use `Resource: "*"` rather than being scoped to specific ARNs
-- No CORS `OPTIONS` method on `/upload` — browser-based uploads (as opposed
-  to curl/Postman/server-to-server) will fail CORS preflight
-- SQS has no dead-letter queue; a message that repeatedly fails processing
-  retries indefinitely rather than being parked for inspection
-- Terraform state is local only — no remote backend/locking configured yet
-- The EC2 processor is a single instance with no auto-scaling or
-  multi-AZ redundancy
+- IAM policies are broader than they need to be (`Resource: "*"`)
+- No CORS support, so uploads only work from curl/Postman/server-to-server, not a browser
+- No dead-letter queue — a message that keeps failing just retries forever
+- Terraform state is local, no remote backend yet
+- Single EC2 instance, no redundancy
 
 ## Roadmap
 
-- Remote Terraform state (S3 + DynamoDB lock table)
-- Scope IAM policies down to least privilege
-- CORS support for browser-based uploads
+- Remote state (S3 + DynamoDB lock table)
+- Least-privilege IAM policies
+- CORS support
 - SQS dead-letter queue
-- CI pipeline for `terraform validate`/`plan` on PRs
+- CI for `terraform validate`/`plan` on PRs

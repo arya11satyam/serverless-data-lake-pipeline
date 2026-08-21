@@ -52,11 +52,11 @@ data "archive_file" "lambda_zip" {
 resource "aws_lambda_function" "file_uploader" {
   filename         = data.archive_file.lambda_zip.output_path
   function_name    = var.lambda_function_name
-  role            = aws_iam_role.lambda_role.arn
-  handler         = "lambda_function.lambda_handler"
-  runtime         = var.lambda_runtime
-  timeout         = 20
-  memory_size     = 128
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "lambda_function.lambda_handler"
+  runtime          = var.lambda_runtime
+  timeout          = 20
+  memory_size      = 128
   source_code_hash = data.archive_file.lambda_zip.output_base64sha256
 
   environment {

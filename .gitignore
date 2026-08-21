@@ -38,3 +38,6 @@ venv.bak/
 
 # Logs
 *.log
+
+# Personal working notes, not for the shared repo
+EXPECTED-BEHAVIOR.md

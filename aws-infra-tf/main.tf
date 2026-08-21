@@ -6,9 +6,9 @@ locals {
 module "networking" {
   source = "./modules/networking"
 
-  project_name       = local.project_name
-  vpc_cidr_block     = var.vpc_cidr_block
-  subnet_cidr_block  = var.subnet_cidr_block
+  project_name      = local.project_name
+  vpc_cidr_block    = var.vpc_cidr_block
+  subnet_cidr_block = var.subnet_cidr_block
 }
 
 # Messaging Module
@@ -25,10 +25,10 @@ module "messaging" {
 module "data" {
   source = "./modules/data"
 
-  source_bucket_name   = "${local.project_name}-source-bucket"
-  target_bucket_name   = "${local.project_name}-target-bucket"
-  dynamodb_table_name  = "${local.project_name}-metadata-table"
-  sns_topic_arn        = module.messaging.sns_topic_arn
+  source_bucket_name  = "${local.project_name}-source-bucket"
+  target_bucket_name  = "${local.project_name}-target-bucket"
+  dynamodb_table_name = "${local.project_name}-metadata-table"
+  sns_topic_arn       = module.messaging.sns_topic_arn
 }
 
 # API Gateway Module
@@ -41,14 +41,14 @@ module "api_gateway" {
   lambda_source_dir    = var.lambda_source_dir
   source_bucket_name   = module.data.source_bucket_name
   dynamodb_table_name  = module.data.dynamodb_table_name
-  api_name            = "${local.project_name}-api"
+  api_name             = "${local.project_name}-api"
 }
 
 # Compute Module
 module "compute" {
   source = "./modules/compute"
 
-  project_name        = local.project_name
+  project_name       = local.project_name
   ami_id             = var.ami_id
   instance_type      = var.instance_type
   subnet_id          = module.networking.subnet_id
@@ -103,10 +103,7 @@ resource "aws_glue_crawler" "data_crawler" {
   depends_on = [aws_glue_catalog_database.data_catalog]
 }
 
-# Crawler Trigger Lambda
-# Fires whenever a new Parquet file lands in the target bucket and starts
-# the Glue crawler above, so the pipeline stays fully hands-off end to end
-# (upload -> convert -> catalog -> queryable in Athena, no manual steps).
+# Crawler Trigger Lambda - starts the Glue crawler when a new Parquet file lands
 resource "aws_iam_role" "crawler_trigger_role" {
   name = "${local.project_name}-crawler-trigger-role"
 
@@ -193,7 +190,6 @@ resource "aws_s3_bucket_notification" "target_bucket_notification" {
 }
 
 # Athena Resources
-# Lets you run SQL against the Parquet data the Glue crawler catalogs above.
 resource "aws_s3_bucket" "athena_results" {
   bucket        = "${local.project_name}-athena-results"
   force_destroy = true
@@ -210,11 +206,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "athena_results_en
 }
 
 resource "aws_athena_workgroup" "data_pipeline_wg" {
-  name = "${local.project_name}-workgroup"
-  # Lets `terraform destroy` remove the workgroup even after query
-  # executions have accumulated in it (Athena refuses to delete a
-  # non-empty workgroup otherwise).
-  force_destroy = true
+  name          = "${local.project_name}-workgroup"
+  force_destroy = true # allow destroy even with existing query history
 
   configuration {
     enforce_workgroup_configuration    = true
