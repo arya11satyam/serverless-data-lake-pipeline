@@ -1,32 +1,26 @@
 # AWS Serverless File Processor
 
-Upload a CSV, get back a queryable table. This pipeline automatically
-converts uploaded CSV files to Parquet and makes them queryable through
-Athena, using Lambda, S3, DynamoDB, SNS/SQS, EC2, and AWS Glue — all
-provisioned with Terraform.
+[![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.5-623CE4?logo=terraform&logoColor=white)](https://www.terraform.io)
+
+Upload a CSV, get back a queryable table. No manual step anywhere between
+upload and query.
+
+## Why
+
+Athena bills per byte scanned. CSV can't be read partially — querying two
+columns still means scanning the whole row. Parquet splits data by column
+and compresses it, so you only pay for the columns you actually query.
+
+This pipeline just automates the conversion so you don't have to remember
+to do it: upload a CSV, and it's sitting in Athena as Parquet, cataloged
+and ready to query, within about a minute.
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    Client(["Client<br/>POST /upload"]):::client --> APIGW["API Gateway<br/>REST endpoint"]:::compute
-    APIGW --> Lambda["Lambda<br/>file + metadata"]:::compute
-    Lambda --> Dynamo[("DynamoDB<br/>file metadata")]:::storage
-    Lambda --> S3Src[("S3 source<br/>raw CSV")]:::storage
-    S3Src --> SNS{{"SNS<br/>fan-out on upload"}}:::messaging
-    SNS --> SQS{{"SQS<br/>buffers, retries"}}:::messaging
-    SQS --> EC2["EC2 worker<br/>CSV to Parquet"]:::compute
-    EC2 --> S3Dst[("S3 processed<br/>Parquet output")]:::storage
-    S3Dst --> Glue["Glue crawler<br/>catalogs output"]:::compute
-    Glue --> Athena["Athena<br/>SQL queries"]:::compute
+![Architecture](docs/architecture.png)
 
-    classDef client fill:#ece7da,stroke:#8a8371,color:#2b2718
-    classDef compute fill:#e2ddfb,stroke:#7266d6,color:#2f2a5c
-    classDef storage fill:#d7f0e2,stroke:#3f9967,color:#153826
-    classDef messaging fill:#fbe1d3,stroke:#c96a3d,color:#5c2a10
-```
-
-This pipeline is built around the following components:
+*Generated from [`docs/architecture.py`](docs/architecture.py) — run
+`python docs/architecture.py` to regenerate after changing the infrastructure.*
 
 - **API Gateway**: REST API endpoint for file uploads
 - **Lambda Function**: Handles file uploads and metadata storage
@@ -47,6 +41,42 @@ This pipeline is built around the following components:
 - **Queryable Output**: Processed data is queryable in Athena within about a minute
 - **Secure Infrastructure**: Encrypted storage and per-service IAM roles
 
+## How It Works
+
+1. File uploaded via API Gateway
+2. Lambda function stores the file in S3 and writes metadata to DynamoDB
+3. S3 event triggers an SNS notification
+4. SNS message is sent to an SQS queue
+5. EC2 instance processes SQS messages
+6. CSV files are converted to Parquet format
+7. Processed files are stored in the destination S3 bucket
+8. The new file triggers a Lambda that starts the Glue crawler
+9. Glue crawler catalogs the data, making it queryable in Athena
+
+<details>
+<summary>Mermaid version (text, diffable in a PR)</summary>
+
+```mermaid
+flowchart TD
+    Client(["Client<br/>POST /upload"]):::client --> APIGW["API Gateway<br/>REST endpoint"]:::compute
+    APIGW --> Lambda["Lambda<br/>file + metadata"]:::compute
+    Lambda --> Dynamo[("DynamoDB<br/>file metadata")]:::storage
+    Lambda --> S3Src[("S3 source<br/>raw CSV")]:::storage
+    S3Src --> SNS{{"SNS<br/>fan-out on upload"}}:::messaging
+    SNS --> SQS{{"SQS<br/>buffers, retries"}}:::messaging
+    SQS --> EC2["EC2 worker<br/>CSV to Parquet"]:::compute
+    EC2 --> S3Dst[("S3 processed<br/>Parquet output")]:::storage
+    S3Dst --> Glue["Glue crawler<br/>catalogs output"]:::compute
+    Glue --> Athena["Athena<br/>SQL queries"]:::compute
+
+    classDef client fill:#ece7da,stroke:#8a8371,color:#2b2718
+    classDef compute fill:#e2ddfb,stroke:#7266d6,color:#2f2a5c
+    classDef storage fill:#d7f0e2,stroke:#3f9967,color:#153826
+    classDef messaging fill:#fbe1d3,stroke:#c96a3d,color:#5c2a10
+```
+
+</details>
+
 ## Project Structure
 
 ```
@@ -62,6 +92,9 @@ This pipeline is built around the following components:
 ├── back-end/
 │   ├── lambda_function.py             Upload handler
 │   └── crawler-trigger/lambda_function.py   Starts the Glue crawler
+├── docs/
+│   ├── architecture.py         Diagram source (diagrams / graphviz)
+│   └── architecture.png        Generated diagram
 └── test/                       Sample CSV/Parquet + a quick read check
 ```
 
@@ -75,7 +108,7 @@ There's no AWS account ID to configure anywhere — Terraform picks it up
 from whatever credentials are active, so this deploys unmodified to any
 account.
 
-## Deployment
+## Quick Start
 
 ```bash
 cd aws-infra-tf
@@ -102,17 +135,33 @@ curl -X POST \
   --data-binary @test/data.csv
 ```
 
-## Processing Flow
+## Design Decisions
 
-1. File uploaded via API Gateway
-2. Lambda function stores the file in S3 and writes metadata to DynamoDB
-3. S3 event triggers an SNS notification
-4. SNS message is sent to an SQS queue
-5. EC2 instance processes SQS messages
-6. CSV files are converted to Parquet format
-7. Processed files are stored in the destination S3 bucket
-8. The new file triggers a Lambda that starts the Glue crawler
-9. Glue crawler catalogs the data, making it queryable in Athena
+**Why SNS *and* SQS, rather than S3 notifying the worker directly?**
+S3 event notifications have no redelivery. If the worker is restarting when
+the event fires, it's gone. SNS gives fan-out for future consumers; SQS
+gives durability and retry. The queue is what makes a worker restart safe.
+
+**Why EC2 rather than Lambda for the conversion?**
+Parquet conversion loads the file into memory. Lambda caps at 10 GB memory
+and 15 minutes, which puts a hard ceiling on input size. EC2 costs more
+idle but has no cliff. A Lambda version would be cheaper and would fail on
+large files.
+
+**Why a separate Lambda to trigger the crawler?**
+Glue crawlers can run on a schedule, but a schedule means either stale data
+or wasted runs. Triggering on object creation means the catalog updates only
+when there's something new to catalog.
+
+**Why five Terraform modules instead of one root configuration?**
+So networking can change without touching messaging. Each module owns one
+concern and exposes a narrow interface. It also makes the blast radius of a
+mistake smaller.
+
+**Why no account ID anywhere in the repo?**
+Terraform reads it from active credentials via `data.aws_caller_identity`.
+The config deploys unmodified into any account — no fork-and-edit step, and
+nothing account-specific to leak in a public repo.
 
 ## AWS Resources Created
 
@@ -127,6 +176,18 @@ curl -X POST \
 - **IAM Roles**: One per service, scoped to what it needs
 - **AWS Glue**: Database and crawler for the data catalog
 - **Athena**: Workgroup for querying the cataloged data
+
+## Cost
+
+The EC2 worker is the only always-on resource and dominates the bill — on a
+`t3.micro` in `us-east-1`, roughly $7.50/month on-demand, or $0 if the
+account is still within its 12-month AWS Free Tier window (750 hours/month
+of `t2`/`t3.micro` included). Everything else — Lambda, API Gateway, S3,
+SQS/SNS, DynamoDB, Glue, Athena — is billed per-request or per-scan and
+rounds to a few cents at low volume.
+
+`terraform destroy` removes all of it. Set an AWS billing alarm before your
+first `apply`.
 
 ## Security Features
 
@@ -158,13 +219,19 @@ cd aws-infra-tf
 terraform destroy -var-file="variables/dev-modular.tfvars"
 ```
 
-## Future Enhancements
+## Honest Status
 
-- Add support for multiple file formats
-- Implement data validation and quality checks
-- Add CloudWatch dashboards for monitoring
-- Implement dead-letter queues for error handling
-- Add an automated testing / CI pipeline
-- Move Terraform state to a remote S3 + DynamoDB backend
-- Scope IAM policies down to least privilege
-- Add CORS support for browser-based uploads
+The gaps, stated here rather than left to be discovered.
+
+- **State is local.** No remote backend, so this is single-operator only
+  and there is no locking. Moving to an S3 backend with a DynamoDB lock
+  table is the fix.
+- **IAM roles are per-service but not least-privilege.** Scoped by service,
+  not by action.
+- **No dead-letter queue.** A repeatedly failing message retries until it
+  expires rather than being quarantined for inspection.
+- **The worker is a single instance.** Under sustained load the queue grows
+  unbounded; nothing autoscales.
+- **No CI.** Nothing runs `fmt`, `validate`, or a security scan on push.
+- **Tested manually.** No automated test proves the end-to-end path after
+  `apply`.
