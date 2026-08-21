@@ -13,11 +13,6 @@ variable "aws_region" {
   type        = string
 }
 
-variable "aws_account_id" {
-  description = "AWS account ID"
-  type        = string
-}
-
 variable "source_bucket_name" {
   description = "Name of the source S3 bucket"
   type        = string

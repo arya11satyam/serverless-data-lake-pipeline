@@ -18,7 +18,6 @@ module "messaging" {
   sqs_queue_name     = "${local.project_name}-queue"
   sns_topic_name     = "${local.project_name}-topic"
   aws_region         = var.aws_region
-  aws_account_id     = var.aws_account_id
   source_bucket_name = "${local.project_name}-source-bucket"
 }
 

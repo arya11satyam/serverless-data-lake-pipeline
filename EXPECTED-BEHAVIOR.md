@@ -107,11 +107,11 @@ click a console button between "upload a CSV" and "query it in Athena."
 
 ## AWS account requirements
 
-- `aws_account_id` in `aws-infra-tf/variables/dev-modular.tfvars` **must
-  match** the account your local AWS CLI credentials resolve to
-  (`aws sts get-caller-identity`). If they don't match, SNS/SQS resource
-  policies get created with the wrong account ID baked into their ARNs and
-  `terraform apply` fails with `MalformedPolicyDocument`.
+- The account ID is **not** a variable — `modules/messaging/main.tf` resolves
+  it at plan/apply time via `data "aws_caller_identity" "current"`, scoped to
+  whatever credentials are active for the run. Nothing account-specific is
+  hardcoded or committed to version control; deploying to a different account
+  just means authenticating as that account before running Terraform.
 - IAM identity needs broad permissions (VPC/EC2/S3/DynamoDB/SQS/SNS/Lambda/
   API Gateway/Glue/Athena/IAM role & policy creation). `AdministratorAccess`
   is what's in use; a scoped-down policy is possible but not currently
@@ -119,6 +119,65 @@ click a console button between "upload a CSV" and "query it in Athena."
 - Region is hardcoded to `us-east-1` in `provider.tf` and the tfvars file —
   your CLI's default region doesn't matter, Terraform's own provider block
   wins.
+
+## State file handling
+
+**Current setup:** local only. `terraform.tfstate` lives on-disk under
+`aws-infra-tf/`, gitignored (correctly — state can contain sensitive values
+in plaintext and should never be committed). This is fine for solo,
+single-machine use, but has real gaps: no locking (two concurrent `apply`
+runs can corrupt it), no automatic drift detection (nothing catches state
+and live AWS silently disagreeing), and it's a single point of failure — if
+this disk is lost, Terraform's entire record of what it manages goes with
+it (the AWS resources themselves would still exist, just permanently
+orphaned from Terraform's tracking).
+
+**Recommended upgrade: remote backend (S3 + DynamoDB).** This repo pins
+Terraform 1.5.7, which predates S3's native locking support (added in
+1.10), so the standard pattern for this version is an S3 bucket for the
+state file plus a DynamoDB table for locking. Setup, when ready:
+
+1. **Bootstrap the backend resources themselves** — these can't be created
+   by the same Terraform config that will use them as a backend (chicken-and-
+   egg: the config needs the bucket to exist before it can even initialize).
+   Create them once, either by hand or via a tiny separate one-off Terraform
+   config kept outside `aws-infra-tf/` (e.g. `bootstrap/`) with its own local
+   state:
+   ```bash
+   aws s3api create-bucket --bucket <project>-tf-state --region us-east-1
+   aws s3api put-bucket-versioning --bucket <project>-tf-state \
+     --versioning-configuration Status=Enabled
+   aws s3api put-bucket-encryption --bucket <project>-tf-state \
+     --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"aws:kms"}}]}'
+   aws s3api put-public-access-block --bucket <project>-tf-state \
+     --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+   aws dynamodb create-table --table-name <project>-tf-lock \
+     --attribute-definitions AttributeName=LockID,AttributeType=S \
+     --key-schema AttributeName=LockID,KeyType=HASH \
+     --billing-mode PAY_PER_REQUEST
+   ```
+2. **Add a backend block** to `aws-infra-tf/provider.tf` (or a new
+   `backend.tf`):
+   ```hcl
+   terraform {
+     backend "s3" {
+       bucket         = "<project>-tf-state"
+       key            = "aws-infra-tf/terraform.tfstate"
+       region         = "us-east-1"
+       dynamodb_table = "<project>-tf-lock"
+       encrypt        = true
+     }
+   }
+   ```
+3. **Migrate the existing local state in**:
+   ```bash
+   terraform init -migrate-state
+   ```
+   Terraform will detect the new backend and offer to copy the current
+   local state into it — confirm with `yes`. From then on, `terraform.tfstate`
+   locally becomes just a thin pointer/cache; the real state lives in S3,
+   versioned (so old states are recoverable) and locked (so concurrent runs
+   queue instead of corrupting each other).
 
 ## Deployment
 
@@ -179,7 +238,7 @@ Useful outputs after apply:
 
 | Issue | Fix |
 |---|---|
-| `aws_account_id` in tfvars pointed at an expired/wrong account | Updated to the active account (598451516076) |
+| `aws_account_id` in tfvars pointed at an expired/wrong account | Updated to the active account, then eliminated the variable entirely — account ID is now resolved dynamically via `data.aws_caller_identity.current`, so this whole bug class can't recur and no account ID is committed to git |
 | `api_gateway_url` output was an unusable ARN, not a URL | Changed to `aws_api_gateway_stage.api_stage.invoke_url` |
 | EC2 processor exited permanently after 10 SQS polls | Rewritten as a `systemd` service with `Restart=always`, infinite polling loop |
 | No Athena layer existed at all | Added Athena workgroup + dedicated results bucket |
