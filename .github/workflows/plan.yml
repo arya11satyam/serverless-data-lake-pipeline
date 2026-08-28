@@ -1,0 +1,91 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "aws-infra-tf/**"
+      - ".github/workflows/plan.yml"
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: terraform-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Runs for every PR, including forks. No AWS access needed or granted.
+  validate:
+    name: Format & Validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aws-infra-tf
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.7"
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform init (no backend)
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        run: terraform validate
+
+  # Only runs for PRs from branches in this repo, never from forks. A fork's
+  # PR never reaches the aws-actions/configure-aws-credentials step below,
+  # so it never gets AWS credentials of any kind.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    defaults:
+      run:
+        working-directory: aws-infra-tf
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::598451516076:role/serverless-data-lake-pipeline-ci-role
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.7"
+
+      - name: terraform init
+        run: terraform init
+
+      - name: terraform plan
+        id: plan
+        run: terraform plan -var-file="variables/dev-modular.tfvars" -no-color
+
+      - name: Comment plan on PR
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          PLAN: "${{ steps.plan.outputs.stdout }}"
+        with:
+          script: |
+            const maxLen = 60000;
+            let plan = process.env.PLAN || "(no output)";
+            if (plan.length > maxLen) {
+              plan = plan.slice(0, maxLen) + "\n... (truncated)";
+            }
+            const body = `#### Terraform Plan\n\`\`\`\n${plan}\n\`\`\``;
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });

@@ -1,4 +1,6 @@
 terraform {
+  required_version = ">= 1.5.0"
+
   backend "s3" {
     bucket         = "serverless-data-lake-pipeline-tf-state-598451516076"
     key            = "aws-infra-tf/terraform.tfstate"

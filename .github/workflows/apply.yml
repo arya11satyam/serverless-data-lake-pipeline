@@ -1,0 +1,83 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "aws-infra-tf/**"
+      - ".github/workflows/apply.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terraform-apply
+  cancel-in-progress: false
+
+jobs:
+  # Computes the plan once. The apply job below applies exactly this
+  # artifact, so what gets approved is what gets applied - not a second,
+  # possibly different plan computed after approval.
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: aws-infra-tf
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::598451516076:role/serverless-data-lake-pipeline-ci-role
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.7"
+
+      - name: terraform init
+        run: terraform init
+
+      - name: terraform plan
+        run: terraform plan -var-file="variables/dev-modular.tfvars" -no-color -out=tfplan
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: aws-infra-tf/tfplan
+          retention-days: 1
+
+  # Gated by the "production" GitHub Environment - pauses here until a
+  # reviewer approves in the Actions UI.
+  apply:
+    name: Apply
+    runs-on: ubuntu-latest
+    needs: plan
+    environment: production
+    defaults:
+      run:
+        working-directory: aws-infra-tf
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::598451516076:role/serverless-data-lake-pipeline-ci-role
+          aws-region: us-east-1
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.7"
+
+      - name: terraform init
+        run: terraform init
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: aws-infra-tf
+
+      - name: terraform apply
+        run: terraform apply -auto-approve tfplan
