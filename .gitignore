@@ -3,7 +3,6 @@
 *.tfstate
 *.tfstate.*
 *.tfvars.backup
-.terraform.lock.hcl
 
 # Lambda deployment packages (Terraform-generated zips, not source)
 aws-infra-tf/**/*.zip
