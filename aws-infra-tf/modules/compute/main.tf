@@ -34,17 +34,15 @@ resource "aws_iam_policy" "ec2_policy" {
   })
 }
 
-resource "aws_iam_policy_attachment" "ec2_policy_attachment" {
-  name       = "${var.project_name}-ec2-policy-attachment"
+resource "aws_iam_role_policy_attachment" "ec2_policy_attachment" {
+  role       = aws_iam_role.ec2_role.name
   policy_arn = aws_iam_policy.ec2_policy.arn
-  roles      = [aws_iam_role.ec2_role.name]
 }
 
 # Enables SSM Session Manager access for debugging, without a SSH key pair.
-resource "aws_iam_policy_attachment" "ec2_ssm_access" {
-  name       = "${var.project_name}-ec2-ssm-access"
+resource "aws_iam_role_policy_attachment" "ec2_ssm_access" {
+  role       = aws_iam_role.ec2_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-  roles      = [aws_iam_role.ec2_role.name]
 }
 
 resource "aws_iam_instance_profile" "ec2_profile" {

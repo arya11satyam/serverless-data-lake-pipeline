@@ -75,16 +75,18 @@ resource "aws_iam_role" "glue_crawler_role" {
   })
 }
 
-resource "aws_iam_policy_attachment" "glue_service_role" {
-  name       = "${local.project_name}-glue-service-role"
+# Non-exclusive attachment: only manages this one role/policy pairing,
+# unlike aws_iam_policy_attachment which claims exclusive ownership of
+# every attachment to the policy account-wide and detaches anything else
+# pointed at it (including unrelated users/groups) on every apply.
+resource "aws_iam_role_policy_attachment" "glue_service_role" {
+  role       = aws_iam_role.glue_crawler_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
-  roles      = [aws_iam_role.glue_crawler_role.name]
 }
 
-resource "aws_iam_policy_attachment" "glue_s3_access" {
-  name       = "${local.project_name}-glue-s3-access"
+resource "aws_iam_role_policy_attachment" "glue_s3_access" {
+  role       = aws_iam_role.glue_crawler_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
-  roles      = [aws_iam_role.glue_crawler_role.name]
 }
 
 resource "aws_glue_catalog_database" "data_catalog" {
@@ -140,10 +142,9 @@ resource "aws_iam_policy" "crawler_trigger_policy" {
   })
 }
 
-resource "aws_iam_policy_attachment" "crawler_trigger_policy_attachment" {
-  name       = "${local.project_name}-crawler-trigger-policy-attachment"
+resource "aws_iam_role_policy_attachment" "crawler_trigger_policy_attachment" {
+  role       = aws_iam_role.crawler_trigger_role.name
   policy_arn = aws_iam_policy.crawler_trigger_policy.arn
-  roles      = [aws_iam_role.crawler_trigger_role.name]
 }
 
 data "archive_file" "crawler_trigger_zip" {

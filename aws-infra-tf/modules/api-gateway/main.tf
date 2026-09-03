@@ -36,10 +36,9 @@ resource "aws_iam_policy" "lambda_policy" {
   })
 }
 
-resource "aws_iam_policy_attachment" "lambda_policy_attachment" {
-  name       = "${var.project_name}-lambda-policy-attachment"
+resource "aws_iam_role_policy_attachment" "lambda_policy_attachment" {
+  role       = aws_iam_role.lambda_role.name
   policy_arn = aws_iam_policy.lambda_policy.arn
-  roles      = [aws_iam_role.lambda_role.name]
 }
 
 # Lambda Function
@@ -69,8 +68,12 @@ resource "aws_lambda_function" "file_uploader" {
 
 # API Gateway
 resource "aws_api_gateway_rest_api" "upload_api" {
-  name               = var.api_name
-  binary_media_types = ["*/*"]
+  name = var.api_name
+  # Scoped to exactly what clients send, not a "*/*" wildcard - that
+  # wildcard applies API-wide and silently breaks MOCK integrations
+  # elsewhere on the API (e.g. the OPTIONS CORS preflight below), which
+  # is not obvious from either config in isolation.
+  binary_media_types = ["application/octet-stream"]
 }
 
 resource "aws_api_gateway_resource" "upload_resource" {
@@ -164,6 +167,7 @@ resource "aws_api_gateway_deployment" "api_deployment" {
 
   triggers = {
     redeployment = sha1(jsonencode([
+      aws_api_gateway_rest_api.upload_api.binary_media_types,
       aws_api_gateway_resource.upload_resource.id,
       aws_api_gateway_method.upload_method.id,
       aws_api_gateway_integration.upload_integration.id,
