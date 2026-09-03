@@ -1,4 +1,4 @@
-# AWS Serverless File Processor
+# serverless-data-lake-pipeline
 
 [![Terraform](https://img.shields.io/badge/Terraform-%3E%3D1.5-623CE4?logo=terraform&logoColor=white)](https://www.terraform.io)
 
