@@ -223,15 +223,21 @@ terraform destroy -var-file="variables/dev-modular.tfvars"
 
 The gaps, stated here rather than left to be discovered.
 
-- **State is local.** No remote backend, so this is single-operator only
-  and there is no locking. Moving to an S3 backend with a DynamoDB lock
-  table is the fix.
-- **IAM roles are per-service but not least-privilege.** Scoped by service,
-  not by action.
+- **App IAM roles are per-service but not least-privilege.** The Lambda,
+  EC2, and Glue roles are scoped by service, not by action (`Resource: "*"`
+  within each). The CI role is scoped more tightly — see `RUNBOOK.md`.
 - **No dead-letter queue.** A repeatedly failing message retries until it
   expires rather than being quarantined for inspection.
 - **The worker is a single instance.** Under sustained load the queue grows
   unbounded; nothing autoscales.
-- **No CI.** Nothing runs `fmt`, `validate`, or a security scan on push.
-- **Tested manually.** No automated test proves the end-to-end path after
-  `apply`.
+- **No security scanning in CI.** `fmt`/`validate` run on every PR, but
+  nothing checks for Terraform misconfigurations or vulnerable Python
+  dependencies yet.
+- **Tested manually, not automatically.** `RUNBOOK.md` gives a repeatable
+  validation checklist, but nothing runs it in CI — an end-to-end pass
+  still has to be triggered by a person.
+- **Glue can create a table scoped to a single file instead of a folder**
+  when multiple uploads have different schemas, which makes that table
+  return zero rows from Athena with no error. See `RUNBOOK.md` regression
+  #3 for the detection steps; the real fix is giving each dataset its own
+  S3 subfolder.
